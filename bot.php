@@ -12,10 +12,6 @@ require_once "database.php";
 require_once "tmp_lots.php";
 require_once "admin.php";
 
-use bb_store\database;
-use bb_store\tmp_lot;
-use bb_store\admin;
-
 class bot
 {
 
@@ -49,30 +45,27 @@ class bot
         $this->categories = $this->dataBase->GetCategories_notEmpty();
     }
 
-    public function SendMediaGroup(){
-        $media = array(
-            array(
+    private function sendMediaGroup($photo_array, $caption)
+    {
+        $media = [];
+
+        foreach ($photo_array as $photo) {
+            array_push($media, array(
                 "type" => "photo",
-                "media" => "http://bm.img.com.ua/nxs/img/prikol/images/large/3/6/69763_65926.jpg"
-            ),
-            array(
-                "type" => "photo",
-                "media" => "http://sfw.org.ua/uploads/posts/2009-02/1233768469_6a99445b394432d5fb7392bdd9dfaf81_full.jpg"
-            ),
-            array(
-                "type" => "photo",
-                "media" => "http://images.mentalfloss.com/sites/default/files/siamese_6.jpg?resize=1100x740"
-            )
-        );
+                "media" => "$photo",
+                "caption" => $caption
+            ));
+        }
 
         $jmedia = json_encode($media);
 
         $json = file_get_contents($this->sendMediaGroup . 'chat_id=' . $this->user_telegram . '&media=' . $jmedia);
-        $this->SendMessage($json, $this->developer_id);
+//        $this->SendMessage($json, $this->developer_id);
+        return $json;
     }
 
     public function ParseQuery($json){
-        $this->SendMessage($json, $this->developer_id);
+//        $this->SendMessage($json, $this->developer_id);
         $query = json_decode($json, true);
         if(isset($query['message'])){
             if(isset($query['message']['photo'])) {
@@ -504,10 +497,14 @@ class bot
         $keyboard = [];
         $edit_row = [];
         if($allPhoto['result'] === true){
-            $btn_more = array(
-                "text" => "Больше фото",
-                "callback_data" => "/more_photo:".$id
-            );
+//            $btn_more = array(
+//                "text" => "Больше фото",
+//                "callback_data" => "/more_photo:".$id
+//            );
+            $ph_arr = [];
+            foreach ($allPhoto['data'] as $ph) {
+                array_push($ph_arr, $ph['url']);
+            }
             $row = [$btn];
             if($this->checkAdmin()){
                 $btn_change_present = array(
@@ -522,14 +519,18 @@ class bot
 
                 $edit_row = [$btn_change_present, $btn_change_price];
                 $keyboard = array(
-                    "inline_keyboard" => [[$btn_more], $row, $edit_row]
+                    "inline_keyboard" => [$row, $edit_row]
                 );
             }
             else{
                 $keyboard = array(
-                    "inline_keyboard" => [[$btn_more], $row]
+                    "inline_keyboard" => [$row]
                 );
             }
+            $replyMarkup = json_encode($keyboard);
+
+            $this->sendMediaGroup($ph_arr, $message);
+            $this->SendMessage($message, $this->user_telegram, $replyMarkup);
         }
         else{
             $row = [$btn];
@@ -554,10 +555,9 @@ class bot
                     "inline_keyboard" => [$row]
                 );
             }
+            $replyMarkup = json_encode($keyboard);
+            $this->SendPhoto($message, $this->user_telegram, $img, $replyMarkup);
         }
-
-        $replyMarkup = json_encode($keyboard);
-        $this->SendPhoto($message, $this->user_telegram, $img, $replyMarkup);
     }
 
     private function checkAdmin(){

@@ -15,4 +15,4 @@ $token = "496323376:AAG8ZWlXI01v1pai_IPYmYnSfVAdm6Y78nc";
 $bot = new bot($token);
 $bot->ParseQuery($json);
 
-$bot->SendMediaGroup();
+//$bot->SendMediaGroup();
