@@ -501,9 +501,9 @@ class bot
 //                "text" => "Больше фото",
 //                "callback_data" => "/more_photo:".$id
 //            );
-            $ph_arr = [];
+            $ph_arr = [urldecode($img)];
             foreach ($allPhoto['data'] as $ph) {
-                array_push($ph_arr, $ph['url']);
+                array_push($ph_arr, urldecode($ph['url']));
             }
             $row = [$btn];
             if($this->checkAdmin()){
@@ -529,7 +529,7 @@ class bot
             }
             $replyMarkup = json_encode($keyboard);
 
-            $this->sendMediaGroup($ph_arr, $message);
+            $this->sendMediaGroup($ph_arr, "Товар №".$number."\n".$name."\n".$description."\n"."Цена: ".$price." рублей");
             $this->SendMessage($message, $this->user_telegram, $replyMarkup);
         }
         else{
@@ -930,6 +930,10 @@ class bot
         $this->user_telegram = $user['id'];
     }
 
+    /**
+     * @param $lot_id
+     * @deprecated
+     */
     private function showAllLotPhoto($lot_id){
         $photo_data = $this->dataBase->GetAllLotPhoto($lot_id);
         if($photo_data['result'] === true){
