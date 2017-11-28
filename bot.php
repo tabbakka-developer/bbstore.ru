@@ -73,10 +73,10 @@ class bot
                 if($this->checkAdmin()){
                     $ph = $this->downloadPhoto($query);
                     if($ph === false){
-                        //
+                        $this->log_db($this->user_telegram, "text", "photo_false");
                     }
                     else {
-
+                        $this->log_db($this->user_telegram, "text", "photo_true");
                         $admin = new \bb_store\admin();
                         $res = $admin->GetLastAction($this->user_telegram);
                         if($res['result'] == true){
@@ -253,6 +253,9 @@ class bot
     }
 
     private function parseText($message){
+
+        $this->log_db($this->user_telegram, "text", $message);
+
         switch (true){
 
             case $message == "/start":
@@ -645,6 +648,8 @@ class bot
 
     private function parseCallback($query){
 
+        $this->log_db($this->user_telegram, "callback_query", $query);
+
         switch (true){
 
             case strpos($query, "more_photo:"):
@@ -707,7 +712,7 @@ class bot
 
             case strpos($query, "tmp_tov_absent"):
                 $tmpLot = new \bb_store\tmp_lot();
-                $result = $tmpLot->EditTmpLot($this->user_telegram, "present", false);
+                $result = $tmpLot->EditTmpLot($this->user_telegram, "present", 0);
                 if($result['result'] == true){
                     $this->SendMessage("Наличие успешно сохранено!", $this->user_telegram);
                     /**
@@ -1062,8 +1067,22 @@ class bot
         }
     }
 
+    /**
+     * @deprecated
+     */
     public function CreateReplyMarkup_inline(){
 
+    }
+
+    private function log_db($user, $action_type, $action){
+        $role = "";
+        if($this->checkAdmin()){
+            $role = "admin";
+        }
+        else {
+            $role = "user";
+        }
+        $this->dataBase->LogWriter($user, $role, $action_type, $action);
     }
 
 }

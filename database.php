@@ -27,6 +27,21 @@ class database
         $this->DB->exec('SET NAMES utf8mb4');
     }
 
+    public function LogWriter($user, $role, $action_type, $action){
+        $timestamp = time();
+        $queryString = "INSERT INTO `log` (`user`, `role`, `action_type`, `action`, `timestamp`) VALUES ('{$user}', '{$role}', '{$action_type}', '{$action}', '{$timestamp}')";
+        $pdoQuery = $this->DB->prepare($queryString);
+        $pdoResult = $this->DB->query($pdoQuery->queryString);
+        if($pdoResult){
+            return $this->returnTrue(array(
+                "id" => $this->DB->lastInsertId()
+            ));
+        }
+        else {
+            return $this->returnFalse($pdoResult->errorInfo());
+        }
+    }
+
     public function GetCategoryById($id){
         $queryString = "SELECT * FROM `categories` WHERE `id` = '{$id}'";
         $pdoQuery = $this->DB->prepare($queryString);
