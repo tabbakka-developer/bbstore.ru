@@ -11,6 +11,7 @@ namespace bb_store;
 require_once "database.php";
 require_once "tmp_lots.php";
 require_once "admin.php";
+require_once "InstagramThief.php";
 
 class bot
 {
@@ -22,6 +23,7 @@ class bot
     private $adm_id_1 = "114202655";
     private $adm_id_2 = "335019483";
     private $developer_id = "219293907";
+    private $super_admin;
 
     private $getFile;
     private $telegram_file;
@@ -31,6 +33,9 @@ class bot
     private $inputIsCat = false;
 
     private $user_telegram;
+    private $user_username;
+    private $user_firstname;
+    private $user_lastname;
 
     function __construct($token)
     {
@@ -43,6 +48,8 @@ class bot
         $this->sendMediaGroup = 'https://api.telegram.org/bot' . $token . '/sendMediaGroup?';
 
         $this->categories = $this->dataBase->GetCategories_notEmpty();
+
+        $this->super_admin = $this->adm_id_1;
     }
 
     private function sendMediaGroup($photo_array, $caption)
@@ -71,63 +78,186 @@ class bot
             if(isset($query['message']['photo'])) {
                 $this->getUser($query['message']['from']);
                 if($this->checkAdmin()){
-                    $ph = $this->downloadPhoto($query);
-                    if($ph === false){
-                        //
-                    }
-                    else {
 
+                    if(isset($query['message']['media_group_id'])){
+                        /*
+                         * a multiple photo message
+                         */
+                        $mgi = $query['message']['media_group_id'];
+                        $this->SendMessage("media_group_id: ".$mgi, $this->developer_id);
                         $admin = new \bb_store\admin();
-                        $res = $admin->GetLastAction($this->user_telegram);
-                        if($res['result'] == true){
-                            if($res['data'][0]['action'] == "add_more_photo_to_tmp"){
-                                $this->SendMessage("<i>Обновление дополнительных фото...</i>", $this->user_telegram);
-                                $tmpLot = new \bb_store\tmp_lot();
-                                $res_up = $tmpLot->UploadAdditionalPhoto_tmp($ph, $this->user_telegram);
+                        $ad_mgi = $admin->GetMediaGroupID($this->user_telegram);
 
-                                if($res_up['result'] == true){
-                                    $data = $res_up['data'][0];
-                                    $id = $data['t_lot_id'];
-                                    $admin->SetLastAction("", $this->user_telegram);
-                                    $btn_more = array(
-                                        "text" => "Опубликовать",
-                                        "callback_data" => "/transfer_tmp:".$id
-                                    );
-                                    $btn_finish = array(
-                                        "text" => "Добавить фото",
-                                        "callback_data" => "/add_more_photo_to_tmp:".$id
-                                    );
-                                    $row1 = [$btn_finish];
-                                    $row2 = [$btn_more];
-                                    $kb = array(
-                                        "inline_keyboard" => [$row1, $row2]
-                                    );
-                                    $rp = json_encode($kb);
-                                    $this->SendMessage("Фото успешно добавленно к товару.", $this->user_telegram, $rp);
+                        $ph = $this->downloadPhoto($query);
+                        if($ph === false){
+                            $this->log_db($this->user_telegram, "text", "photo_false_mgi:".$mgi);
+                            $this->SendMessage("Ошибка загрузки фото на сервер!", $this->user_telegram);
+                            return null;
+                        }
+                        else {
+                            if($ad_mgi['result'] === true){
+                                $this->SendMessage(print_r($ad_mgi, true), $this->user_telegram);
+                                if($ad_mgi['data'][0]['media_group_id'] == ""){
+                                    /*
+                                     * media group is NULL, so this is first photo from media group
+                                     */
+                                    $ad_up_res = $admin->SetMediaGroupID($mgi, $this->user_telegram);
+                                    if($ad_up_res['result'] === true){
+                                        $this->SendMessage("<i>Обновление медиа данных...</i>", $this->user_telegram);
+                                        $tmpLot = new \bb_store\tmp_lot();
+                                        $res = $tmpLot->CheckIsAlreadyExist($this->user_telegram);
+                                        if($res['result'] === true){
+                                            if(count($res['data']) > 0){
+                                                $e_r = $tmpLot->EditTmpLot($this->user_telegram, "image", urlencode($ph));
+                                                if($e_r['result'] === true){
+                                                    $this->SendMessage("Фото успешно установленно основным для товара!", $this->user_telegram);
+//                                                    $this->openTmpLot();
+                                                }
+                                                else {
+                                                    $this->SendMessage("Ошибка установки фото товара!", $this->user_telegram);
+                                                    $this->SendMessage(print_r($e_r, true), $this->user_telegram);
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
-                                else {
-                                    $this->SendMessage("Ошибка!", $this->user_telegram);
+                                elseif($ad_mgi['data'][0]['media_group_id'] == $mgi) {
+                                    /*
+                                     * this is just additional photos for that stuff
+                                     */
+//                                    $this->SendMessage("Media ID not empty!!", $this->user_telegram);
+                                    $this->SendMessage("<i>Обновление дополнительных фото...</i>", $this->user_telegram);
+                                    $tmpLot = new \bb_store\tmp_lot();
+                                    $res_up = $tmpLot->UploadAdditionalPhoto_tmp($ph, $this->user_telegram);
+                                    if($res_up['result'] == true){
+                                        $data = $res_up['data'][0];
+                                        $id = $data['t_lot_id'];
+                                        $admin->SetLastAction("", $this->user_telegram);
+                                        $btn_more = array(
+                                            "text" => "Опубликовать",
+                                            "callback_data" => "/transfer_tmp:".$id
+                                        );
+                                        $btn_finish = array(
+                                            "text" => "Добавить фото",
+                                            "callback_data" => "/add_more_photo_to_tmp:".$id
+                                        );
+                                        $row1 = [$btn_finish];
+                                        $row2 = [$btn_more];
+                                        $kb = array(
+                                            "inline_keyboard" => [$row1, $row2]
+                                        );
+                                        $rp = json_encode($kb);
+                                        $this->SendMessage("Фото успешно добавленно к товару.", $this->user_telegram, $rp);
+                                    }
+                                    else {
+                                        $this->SendMessage("Ошибка!", $this->user_telegram);
+                                    }
                                 }
                             }
                             else {
-                                $tmpLot = new \bb_store\tmp_lot();
-                                $res = $tmpLot->CheckIsAlreadyExist($this->user_telegram);
-                                if($res['result'] === true){
-                                    if(count($res['data']) > 0){
-                                        $e_r = $tmpLot->EditTmpLot($this->user_telegram, "image", urlencode($ph));
-                                        if($e_r['result'] === true){
-                                            $this->SendMessage("Фото успешно добавленно к товару", $this->user_telegram);
-                                            $this->openTmpLot();
-                                        }
-                                        else {
-                                            $this->SendMessage("Ошибка добавления фото к товару!", $this->user_telegram);
-                                            $this->SendMessage(print_r($e_r, true), $this->user_telegram);
+                                $this->SendMessage("<b>Ошибка!</b>", $this->user_telegram);
+                                $this->SendMessage(print_r($ad_mgi, true), $this->user_telegram);
+                            }
+                        }
+
+
+//                        $ph = $this->downloadPhoto($query);
+//                        if($ph === false){
+//                            $this->log_db($this->user_telegram, "text", "photo_false_mgi:".$mgi);
+//                        }
+//                        else {
+//                            $this->log_db($this->user_telegram, "text", "photo_true_mgi:".$mgi);
+////                            $res = $admin->SetMediaGroupID($mgi, $this->user_telegram);
+////                            $this->SendMessage(print_r($res, true), $this->user_telegram);
+////                            if($res['result'] === true){
+//                                $this->SendMessage("<i>Обновление медиа данных...</i>", $this->user_telegram);
+//                                $tmpLot = new \bb_store\tmp_lot();
+//                                $res = $tmpLot->CheckIsAlreadyExist($this->user_telegram);
+//                                if($res['result'] === true){
+//                                    if(count($res['data']) > 0){
+//                                        $e_r = $tmpLot->EditTmpLot($this->user_telegram, "image", urlencode($ph));
+//                                        if($e_r['result'] === true){
+//                                            $this->SendMessage("Фото успешно добавленно к товару", $this->user_telegram);
+//                                            $this->openTmpLot();
+//                                        }
+//                                        else {
+//                                            $this->SendMessage("Ошибка добавления фото к товару!", $this->user_telegram);
+//                                            $this->SendMessage(print_r($e_r, true), $this->user_telegram);
+//                                        }
+//                                    }
+//                                }
+////                            }
+////                            else {
+////                                //error
+////                                $this->SendMessage("<b>ОШИБКА!</b>", $this->user_telegram);
+////                                $this->SendMessage(print_r($res['error'], true), $this->user_telegram);
+////                            }
+//                        }
+                    }
+                    else {
+                        /*
+                         * usual photo message, continue old method
+                         */
+                        $this->SendMessage("media_group_id: undefined", $this->developer_id);
+                        $ph = $this->downloadPhoto($query);
+                        if($ph === false){
+                            $this->log_db($this->user_telegram, "text", "photo_false");
+                        }
+                        else {
+                            $this->log_db($this->user_telegram, "text", "photo_true");
+                            $admin = new \bb_store\admin();
+                            $res = $admin->GetLastAction($this->user_telegram);
+                            if($res['result'] == true){
+                                if($res['data'][0]['action'] == "add_more_photo_to_tmp"){
+                                    $this->SendMessage("<i>Обновление дополнительных фото...</i>", $this->user_telegram);
+                                    $tmpLot = new \bb_store\tmp_lot();
+                                    $res_up = $tmpLot->UploadAdditionalPhoto_tmp($ph, $this->user_telegram);
+
+                                    if($res_up['result'] == true){
+                                        $data = $res_up['data'][0];
+                                        $id = $data['t_lot_id'];
+                                        $admin->SetLastAction("", $this->user_telegram);
+                                        $btn_more = array(
+                                            "text" => "Опубликовать",
+                                            "callback_data" => "/transfer_tmp:".$id
+                                        );
+                                        $btn_finish = array(
+                                            "text" => "Добавить фото",
+                                            "callback_data" => "/add_more_photo_to_tmp:".$id
+                                        );
+                                        $row1 = [$btn_finish];
+                                        $row2 = [$btn_more];
+                                        $kb = array(
+                                            "inline_keyboard" => [$row1, $row2]
+                                        );
+                                        $rp = json_encode($kb);
+                                        $this->SendMessage("Фото успешно добавленно к товару.", $this->user_telegram, $rp);
+                                    }
+                                    else {
+                                        $this->SendMessage("Ошибка!", $this->user_telegram);
+                                    }
+                                }
+                                else {
+                                    $tmpLot = new \bb_store\tmp_lot();
+                                    $res = $tmpLot->CheckIsAlreadyExist($this->user_telegram);
+                                    if($res['result'] === true){
+                                        if(count($res['data']) > 0){
+                                            $e_r = $tmpLot->EditTmpLot($this->user_telegram, "image", urlencode($ph));
+                                            if($e_r['result'] === true){
+                                                $this->SendMessage("Фото успешно добавленно к товару", $this->user_telegram);
+                                                $this->openTmpLot();
+                                            }
+                                            else {
+                                                $this->SendMessage("Ошибка добавления фото к товару!", $this->user_telegram);
+                                                $this->SendMessage(print_r($e_r, true), $this->user_telegram);
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
+                    return null;
                 }
                 else {
                     $this->SendMessage("Загрузка фото разрешена только администрации!", $this->user_telegram);
@@ -253,7 +383,16 @@ class bot
     }
 
     private function parseText($message){
+
+        $this->log_db($this->user_telegram, "text", $message);
+
         switch (true){
+
+            case $message == "/empty_my_media":
+                $admin = new admin();
+                $res = $admin->SetMediaGroupID(null, $this->user_telegram);
+                $this->SendMessage(print_r($res, true), $this->user_telegram);
+                break;
 
             case $message == "/start":
 //                $this->SendMessage(print_r($this->categories, true), $this->user_telegram);
@@ -279,9 +418,49 @@ class bot
             default:
                 $this->compareIncomeWithCategries($message);
                 if($this->inputIsCat == false){
-                    $this->addColumnToTmp($message);
+                    if($this->checkAdmin()){
+                        $admin = new admin();
+                        $data = $admin->GetLastAction($this->user_telegram);
+//                        $this->SendMessage(print_r($data, true), $this->user_telegram);
+                        if($data['result'] === true){
+                            if($data['data'][0]['action'] == "create_category"){
+//                                $this->SendMessage($message, $this->user_telegram);
+                                $result = $this->dataBase->CreateCategory($message);
+//                                $this->SendMessage(print_r($result, true), $this->user_telegram);
+                                if($result['result'] === true){
+                                    $admin->SetLastAction("", $this->user_telegram);
+                                    $this->SendMessage("Категория $message создана успешно!", $this->user_telegram);
+                                }
+                                else {
+                                    $this->SendMessage("Ошибка создания категории!", $this->user_telegram);
+                                }
+                            }
+                            elseif ($data['data'][0]['action'] == "add_admin"){
+                                $this->addUserToAdmin($message);
+                                $admin->SetLastAction("", $this->user_telegram);
+                            }
+                            else{
+                                $this->addColumnToTmp($message);
+                            }
+                        }
+                        else {
+                            $this->SendMessage("Ошибка!", $this->user_telegram);
+                        }
+                    }
+//
                 }
                 break;
+        }
+    }
+
+    private function addUserToAdmin($telegram){
+        $admin = new admin();
+        $data = $admin->AddNewAdmin($telegram);
+        if($data['result'] === true){
+            $this->SendMessage("Администратор был успешно добавлен!", $this->user_telegram);
+        }
+        else {
+            $this->SendMessage(print_r($data, true), $this->user_telegram);
         }
     }
 
@@ -292,12 +471,32 @@ class bot
                 "text" => "Добавить товар",
                 "callback_data" => "/new_lot"
             );
-            $row = [$btn_create_lot];
-            $kb = array(
-                "inline_keyboard" => [$row]
+            $btn_create_category = array(
+                "text" => "Создать категорию",
+                "callback_data" => "/create_category"
             );
-            $rp = json_encode($kb);
-            $this->SendMessage($message, $this->user_telegram, $rp);
+            $btn_admins = array(
+                "text" => "Список админов",
+                "callback_data" => "/admins_list"
+            );
+            $row3 = [$btn_admins];
+
+            $row = [$btn_create_lot];
+            $row2 = [$btn_create_category];
+            if(($this->user_telegram == $this->super_admin)||($this->user_telegram == $this->developer_id)){
+                $kb = array(
+                    "inline_keyboard" => [$row, $row2, $row3]
+                );
+                $rp = json_encode($kb);
+                $this->SendMessage($message, $this->user_telegram, $rp);
+            }
+            else {
+                $kb = array(
+                    "inline_keyboard" => [$row, $row2]
+                );
+                $rp = json_encode($kb);
+                $this->SendMessage($message, $this->user_telegram, $rp);
+            }
         }
         else {
             $this->SendMessage("Вы не являетесь администратором", $this->user_telegram);
@@ -362,25 +561,61 @@ class bot
                          */
                         $result = $tmpLot->EditTmpLot($this->user_telegram, "price", $message);
                         if($result['result'] == true){
-                            $btn_pr = array(
-                                "text" => "Есть",
-                                "callback_data" => "/tmp_tov_present"
-                            );
+                            $r2 = $tmpLot->EditTmpLot($this->user_telegram, "present", true);
+                            if($r2['result'] == true){
+                                /**
+                                 * Edit_category part
+                                 */
+                                $categories = $this->dataBase->GetCategories();
+                                if($categories['result'] === true){
+                                    if(count($categories['data']) > 0){
+                                        $rows = [];
+                                        foreach ($categories['data'] as $category){
+                                            $c_name = $category['name'];
+                                            $c_id = $category['id'];
+                                            $btn = array(
+                                                "text" => $c_name,
+                                                "callback_data" => "/tmp_lot_set_category:".$c_id
+                                            );
+                                            $t_row = [$btn];
+                                            array_push($rows, $t_row);
+                                        }
 
-                            $btn_ab = array(
-                                "text" => "Нет",
-                                "callback_data" => "/tmp_tov_absent"
-                            );
+                                        $keyboard = array(
+                                            "inline_keyboard" => $rows
+                                        );
+                                        $rp = json_encode($keyboard);
+                                        $this->SendMessage("Цена успешна сохранена!\nУкажите <i>категорию </i> товара:", $this->user_telegram, $rp);
+                                    }
+                                    else {
+                                        $this->SendMessage("<b>Получено 0 категорий!</b>", $this->user_telegram);
+                                    }
+                                }
+                            }
+                            else {
+                                $this->SendMessage("Ошибка!", $this->user_telegram);
+                                $this->SendMessage(print_r($r2, true), $this->user_telegram);
+                            }
+//                            $btn_pr = array(
+//                                "text" => "Есть",
+//                                "callback_data" => "/tmp_tov_present"
+//                            );
+//
+//                            $btn_ab = array(
+//                                "text" => "Нет",
+//                                "callback_data" => "/tmp_tov_absent"
+//                            );
+//
+//                            $row1 = [$btn_pr];
+//                            $row2 = [$btn_ab];
+//
+//                            $kb = array(
+//                                "inline_keyboard" => [$row1, $row2]
+//                            );
+//
+//                            $rp = json_encode($kb);
 
-                            $row1 = [$btn_pr];
-                            $row2 = [$btn_ab];
 
-                            $kb = array(
-                                "inline_keyboard" => [$row1, $row2]
-                            );
-
-                            $rp = json_encode($kb);
-                            $this->SendMessage("Цена успешна сохранена!\nУкажите <i>наличие </i> товара (есть/нет):", $this->user_telegram, $rp);
                         }
                         else {
                             $this->SendMessage("Ошибка!", $this->user_telegram);
@@ -501,9 +736,9 @@ class bot
 //                "text" => "Больше фото",
 //                "callback_data" => "/more_photo:".$id
 //            );
-            $ph_arr = [];
+            $ph_arr = [urldecode($img)];
             foreach ($allPhoto['data'] as $ph) {
-                array_push($ph_arr, $ph['url']);
+                array_push($ph_arr, urldecode($ph['url']));
             }
             $row = [$btn];
             if($this->checkAdmin()){
@@ -529,7 +764,7 @@ class bot
             }
             $replyMarkup = json_encode($keyboard);
 
-            $this->sendMediaGroup($ph_arr, $message);
+            $this->sendMediaGroup($ph_arr, "Товар №".$number."\n".$name."\n".$description."\n"."Цена: ".$price." рублей");
             $this->SendMessage($message, $this->user_telegram, $replyMarkup);
         }
         else{
@@ -565,6 +800,15 @@ class bot
             return true;
         }
         else {
+            return false;
+        }
+    }
+
+    private function checkSuperAdmin(){
+        if(($this->user_telegram == $this->super_admin)||($this->user_telegram == $this->developer_id)){
+            return true;
+        }
+        else{
             return false;
         }
     }
@@ -643,9 +887,155 @@ class bot
         }
     }
 
+    private function deleteFromAdmins($telegram){
+        $admin = new admin();
+        $data = $admin->DeleteFromAdmins($telegram);
+        if($data['result'] === true){
+            $this->SendMessage("Пользователь был успешно удален из администрации!", $this->user_telegram);
+        }
+        else {
+            $this->SendMessage(print_r($data, true), $this->user_telegram);
+        }
+    }
+
+    private function showAdminInfo($telegram){
+        $admin = new admin();
+        $data = $admin->GetAdmin($telegram);
+        if($data['result'] === true){
+            $username = $data['data'][0]['username'];
+            $first_name = $data['data'][0]['first_name'];
+            $last_name = $data['data'][0]['last_name'];
+
+            $message =
+                "Информация об администраторе #<a href='tg://user?id=".$telegram."'>".$telegram."</a>\n".
+                "<b>Юзернейм: </b> @".$username."\n".
+                "<b>Имя: </b> ".$first_name."\n".
+                "<b>Фамилия: </b>".$last_name."\n\n".
+                "<i>Если некоторые поля пустые, значит пользователь не заполнил их в телеграмме!".
+                " (после заполнения он может отправить в бота любое сообщение для обновления данных в базе.</i>";
+
+            $btn = array(
+                "text" => "Удалить",
+                "callback_data" => "/delete_from_adm:".$telegram
+            );
+
+            $row = [$btn];
+            $kb = [
+                "inline_keyboard" => [$row]
+            ];
+            $rp = json_encode($kb);
+
+            $this->SendMessage($message, $this->user_telegram, $rp);
+        }
+        else {
+            $this->SendMessage("Ошибка!", $this->user_telegram);
+        }
+    }
+
     private function parseCallback($query){
 
+        $this->log_db($this->user_telegram, "callback_query", $query);
+
         switch (true){
+
+            case strpos($query, "add_adm"):
+                if($this->checkSuperAdmin()){
+                    $admin = new admin();
+                    $data = $admin->SetLastAction("add_admin", $this->user_telegram);
+                    if($data['result'] === true){
+                        $this->SendMessage("Введите ID нового администратора: ", $this->user_telegram);
+                    }
+                    else {
+                        $this->SendMessage(print_r($data, true), $this->user_telegram);
+                    }
+                }
+                else {
+                    $this->SendMessage("Нет доступа!", $this->user_telegram);
+                }
+                break;
+
+            case strpos($query, "delete_from_adm:"):
+                $adm_id_to_delete = explode(":", $query)[1];
+                if($this->checkSuperAdmin()){
+                    $this->deleteFromAdmins($adm_id_to_delete);
+                }
+                else{
+                    $this->SendMessage("Нет доступа!", $this->user_telegram);
+                }
+                break;
+
+            case strpos($query, "show_adm:"):
+                $adm_id_to_show = explode(":", $query)[1];
+                if($this->checkSuperAdmin()){
+                    $this->showAdminInfo($adm_id_to_show);
+                }
+                else {
+                    $this->SendMessage("Нет доступа!", $this->user_telegram);
+                }
+                break;
+
+            case strpos($query, "admins_list"):
+                if($this->checkSuperAdmin()){
+                    $admin = new admin();
+                    $data = $admin->GetAllAdmins();
+                    if($data['result'] === true){
+//                        $this->SendMessage(print_r($data, true), $this->user_telegram);
+                        $message ="Текущие администраторы:";
+                        $arr = [];
+                        foreach ($data['data'] as $adm){
+                            if(($adm['username'] != "")&&($adm['username'] != null)){
+                                $row = [
+                                    array(
+                                        "text" => $adm['username'],
+                                        "callback_data" => "/show_adm:".$adm['telegram']
+                                    )
+                                ];
+                                array_push($arr, $row);
+                            }
+                            else {
+                                $row = [
+                                    array(
+                                        "text" => $adm['telegram'],
+                                        "callback_data" => "/show_adm:".$adm['telegram']
+                                    )
+                                ];
+                                array_push($arr, $row);
+                            }
+                        }
+                        $row2 = [
+                            array(
+                                "text" => "Добавить",
+                                "callback_data" => "/add_adm"
+                            )
+                        ];
+                        array_push($arr, $row2);
+                        $rp_p = ["inline_keyboard" => $arr];
+                        $rp = json_encode($rp_p);
+                        $this->SendMessage($message, $this->user_telegram, $rp);
+                    }
+                    else {
+                        $this->SendMessage("Ошибка получения данных!", $this->user_telegram);
+                    }
+                }
+                else {
+                    $this->SendMessage("Нет доступа!", $this->user_telegram);
+                }
+                break;
+
+            case strpos($query, "create_category"):
+                if($this->checkAdmin()){
+                    $admin = new admin();
+                    $data = $admin->SetLastAction("create_category",$this->user_telegram);
+                    if($data['result'] === true){
+                        $this->SendMessage("Введите название категории:", $this->user_telegram);
+                    }
+                    else {
+                        $this->SendMessage("Ошибка!", $this->user_telegram);
+                    }
+                }
+
+
+                break;
 
             case strpos($query, "more_photo:"):
 //                $this->SendMessage($query, $this->user_telegram);
@@ -662,91 +1052,91 @@ class bot
                 $this->newLotHandler();
                 break;
 
-            case strpos($query, "tmp_tov_present"):
-                $tmpLot = new \bb_store\tmp_lot();
-                $result = $tmpLot->EditTmpLot($this->user_telegram, "present", true);
-                if($result['result'] == true){
-                    $this->SendMessage("Наличие успешно сохранено!", $this->user_telegram);
-                    /**
-                     * Edit_category part
-                     */
-                    $categories = $this->dataBase->GetCategories();
-                    if($categories['result'] === true){
-                        if(count($categories['data']) > 0){
-                            $rows = [];
-                            foreach ($categories['data'] as $category){
-                                $c_name = $category['name'];
-                                $c_id = $category['id'];
-                                $btn = array(
-                                    "text" => $c_name,
-                                    "callback_data" => "/tmp_lot_set_category:".$c_id
-                                );
-                                $t_row = [$btn];
-                                array_push($rows, $t_row);
-                            }
-
-                            $keyboard = array(
-                                "inline_keyboard" => $rows
-                            );
-                            $rp = json_encode($keyboard);
-                            $this->SendMessage("Укажите <i>категорию </i> товара:", $this->user_telegram, $rp);
-                        }
-                        else {
-                            $this->SendMessage("<b>Получено 0 категорий!</b>", $this->user_telegram);
-                        }
-                    }
-                    else {
-                        $this->SendMessage("<b>Ошибка получения категорий!</b>", $this->user_telegram);
-                    }
-                }
-                else {
-                    $this->SendMessage("Ошибка!", $this->user_telegram);
-                    $this->SendMessage(print_r($result, true), $this->user_telegram);
-                }
-                break;
-
-            case strpos($query, "tmp_tov_absent"):
-                $tmpLot = new \bb_store\tmp_lot();
-                $result = $tmpLot->EditTmpLot($this->user_telegram, "present", false);
-                if($result['result'] == true){
-                    $this->SendMessage("Наличие успешно сохранено!", $this->user_telegram);
-                    /**
-                     * Edit_category part
-                     */
-                    $categories = $this->dataBase->GetCategories();
-                    if($categories['result'] === true){
-                        if(count($categories['data']) > 0){
-                            $rows = [];
-                            foreach ($categories['data'] as $category){
-                                $c_name = $category['name'];
-                                $c_id = $category['id'];
-                                $btn = array(
-                                    "text" => $c_name,
-                                    "callback_data" => "/tmp_lot_set_category:".$c_id
-                                );
-                                $t_row = [$btn];
-                                array_push($rows, $t_row);
-                            }
-
-                            $keyboard = array(
-                                "inline_keyboard" => $rows
-                            );
-                            $rp = json_encode($keyboard);
-                            $this->SendMessage("Укажите <i>категорию </i> товара:", $this->user_telegram, $rp);
-                        }
-                        else {
-                            $this->SendMessage("<b>Получено 0 категорий!</b>", $this->user_telegram);
-                        }
-                    }
-                    else {
-                        $this->SendMessage("<b>Ошибка получения категорий!</b>", $this->user_telegram);
-                    }
-                }
-                else {
-                    $this->SendMessage("Ошибка!", $this->user_telegram);
-                    $this->SendMessage(print_r($result, true), $this->user_telegram);
-                }
-                break;
+//            case strpos($query, "tmp_tov_present"):
+//                $tmpLot = new \bb_store\tmp_lot();
+//                $result = $tmpLot->EditTmpLot($this->user_telegram, "present", true);
+//                if($result['result'] == true){
+//                    $this->SendMessage("Наличие успешно сохранено!", $this->user_telegram);
+//                    /**
+//                     * Edit_category part
+//                     */
+//                    $categories = $this->dataBase->GetCategories();
+//                    if($categories['result'] === true){
+//                        if(count($categories['data']) > 0){
+//                            $rows = [];
+//                            foreach ($categories['data'] as $category){
+//                                $c_name = $category['name'];
+//                                $c_id = $category['id'];
+//                                $btn = array(
+//                                    "text" => $c_name,
+//                                    "callback_data" => "/tmp_lot_set_category:".$c_id
+//                                );
+//                                $t_row = [$btn];
+//                                array_push($rows, $t_row);
+//                            }
+//
+//                            $keyboard = array(
+//                                "inline_keyboard" => $rows
+//                            );
+//                            $rp = json_encode($keyboard);
+//                            $this->SendMessage("Укажите <i>категорию </i> товара:", $this->user_telegram, $rp);
+//                        }
+//                        else {
+//                            $this->SendMessage("<b>Получено 0 категорий!</b>", $this->user_telegram);
+//                        }
+//                    }
+//                    else {
+//                        $this->SendMessage("<b>Ошибка получения категорий!</b>", $this->user_telegram);
+//                    }
+//                }
+//                else {
+//                    $this->SendMessage("Ошибка!", $this->user_telegram);
+//                    $this->SendMessage(print_r($result, true), $this->user_telegram);
+//                }
+//                break;
+//
+//            case strpos($query, "tmp_tov_absent"):
+//                $tmpLot = new \bb_store\tmp_lot();
+//                $result = $tmpLot->EditTmpLot($this->user_telegram, "present", 0);
+//                if($result['result'] == true){
+//                    $this->SendMessage("Наличие успешно сохранено!", $this->user_telegram);
+//                    /**
+//                     * Edit_category part
+//                     */
+//                    $categories = $this->dataBase->GetCategories();
+//                    if($categories['result'] === true){
+//                        if(count($categories['data']) > 0){
+//                            $rows = [];
+//                            foreach ($categories['data'] as $category){
+//                                $c_name = $category['name'];
+//                                $c_id = $category['id'];
+//                                $btn = array(
+//                                    "text" => $c_name,
+//                                    "callback_data" => "/tmp_lot_set_category:".$c_id
+//                                );
+//                                $t_row = [$btn];
+//                                array_push($rows, $t_row);
+//                            }
+//
+//                            $keyboard = array(
+//                                "inline_keyboard" => $rows
+//                            );
+//                            $rp = json_encode($keyboard);
+//                            $this->SendMessage("Укажите <i>категорию </i> товара:", $this->user_telegram, $rp);
+//                        }
+//                        else {
+//                            $this->SendMessage("<b>Получено 0 категорий!</b>", $this->user_telegram);
+//                        }
+//                    }
+//                    else {
+//                        $this->SendMessage("<b>Ошибка получения категорий!</b>", $this->user_telegram);
+//                    }
+//                }
+//                else {
+//                    $this->SendMessage("Ошибка!", $this->user_telegram);
+//                    $this->SendMessage(print_r($result, true), $this->user_telegram);
+//                }
+//                break;
 
             case strpos($query, "add_more_photo_to_tmp:"):
                 $t_lot_id = explode(":", $query)[1];
@@ -761,6 +1151,10 @@ class bot
                 $lot_id = explode(":", $query)[1];
                 $tmpLot = new \bb_store\tmp_lot();
                 $result = $tmpLot->Transfer($this->user_telegram);
+
+                $admin = new \bb_store\admin();
+                $res = $admin->SetMediaGroupID(null,$this->user_telegram);
+
 //                $this->SendMessage(print_r($result, true), $this->user_telegram);
                 $this->SendMessage("Лот успрешно опубликован!", $this->user_telegram);
                 $this->showAdminMenu();
@@ -802,12 +1196,15 @@ class bot
             case strpos($query, "delete_my_tmp"):
                 if($this->checkAdmin()){
                     $tmpLot = new \bb_store\tmp_lot();
+                    $admin = new \bb_store\admin();
                     $ans = $tmpLot->DeleteTmp($this->user_telegram);
                     if($ans['result'] == true){
+                        $res = $admin->SetMediaGroupID(null,$this->user_telegram);
                         $this->SendMessage("<b>Успеншо удалено!</b>", $this->user_telegram);
                         $this->newLotHandler();
                     }
                     else {
+                        $res = $admin->SetMediaGroupID(null,$this->user_telegram);
                         $this->SendMessage("<b>Ошибка!</b>", $this->user_telegram);
                     }
                 }
@@ -863,6 +1260,8 @@ class bot
             $tmpLot = new tmp_lot();
             $ans = $tmpLot->CheckIsAlreadyExist($this->user_telegram);
             if($ans['result'] == true){
+                $admin = new \bb_store\admin();
+                $res = $admin->SetMediaGroupID(null,$this->user_telegram);
                 if(count($ans['data']) > 0){
                     $btn_open = array(
                         "text" => "Открыть и продолжить",
@@ -928,8 +1327,67 @@ class bot
 
     private function getUser($user){
         $this->user_telegram = $user['id'];
+        $this->user_username = $user['username'];
+        $this->user_firstname = $user['first_name'];
+        $this->user_lastname = $user['last_name'];
+        if($this->checkAdmin()){
+            $admin = new admin();
+            $data = $admin->GetUserName($this->user_telegram);
+            if($data['result'] === true){
+                if($data['data'][0]['username'] != $this->user_username){
+                    $result = $admin->SetUserName($this->user_telegram, $this->user_username);
+                    if($result['result'] === true){
+
+                    }
+                    else {
+                        $this->SendMessage(print_r($result, true), $this->user_telegram);
+                    }
+                }
+            }
+            else{
+                $this->SendMessage(print_r($data, true), $this->user_telegram);
+            }
+            //
+            $data = null;
+            $data = $admin->GetFirstName($this->user_telegram);
+            if($data['result'] === true){
+                if($data['data'][0]['first_name'] != $this->user_firstname){
+                    $result = $admin->SetFirstName($this->user_telegram, $this->user_firstname);
+                    if($result['result'] === true){
+
+                    }
+                    else {
+                        $this->SendMessage(print_r($result, true), $this->user_telegram);
+                    }
+                }
+            }
+            else{
+                $this->SendMessage(print_r($data, true), $this->user_telegram);
+            }
+            //
+            $data = null;
+            $data = $admin->GetLastName($this->user_telegram);
+            if($data['result'] === true){
+                if($data['data'][0]['last_name'] != $this->user_lastname){
+                    $result = $admin->SetLastName($this->user_telegram, $this->user_lastname);
+                    if($result['result'] === true){
+
+                    }
+                    else {
+                        $this->SendMessage(print_r($result, true), $this->user_telegram);
+                    }
+                }
+            }
+            else{
+                $this->SendMessage(print_r($data, true), $this->user_telegram);
+            }
+        }
     }
 
+    /**
+     * @param $lot_id
+     * @deprecated
+     */
     private function showAllLotPhoto($lot_id){
         $photo_data = $this->dataBase->GetAllLotPhoto($lot_id);
         if($photo_data['result'] === true){
@@ -1058,8 +1516,22 @@ class bot
         }
     }
 
+    /**
+     * @deprecated
+     */
     public function CreateReplyMarkup_inline(){
 
+    }
+
+    private function log_db($user, $action_type, $action){
+        $role = "";
+        if($this->checkAdmin()){
+            $role = "admin";
+        }
+        else {
+            $role = "user";
+        }
+        $this->dataBase->LogWriter($user, $role, $action_type, $action);
     }
 
 }
